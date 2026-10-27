@@ -307,7 +307,8 @@ where
         let named_source = Source {
             name: self.manifest_rel_path.display().to_string(),
             code: Arc::from(
-                serde_yaml::to_string(&generated_recipe.recipe)
+                generated_recipe
+                    .to_recipe_yaml()
                     .into_diagnostic()?
                     .as_str(),
             ),
@@ -389,9 +390,20 @@ where
         //
         // By default, this includes all the outputs in the recipe. These should all be
         // build from source, in particular from the current source.
+        let self_source_path = self
+            .generate_recipe
+            .self_source_path(&self.source_dir.join(&self.manifest_rel_path));
         let local_source_packages: HashMap<String, SourcePackageSpec> = discovered_outputs
             .iter()
-            .map(|output| (output.name.clone(), PathSpec { path: ".".into() }.into()))
+            .map(|output| {
+                (
+                    output.name.clone(),
+                    PathSpec {
+                        path: self_source_path.clone(),
+                    }
+                    .into(),
+                )
+            })
             .collect();
 
         let mut subpackages = HashMap::new();
@@ -439,9 +451,7 @@ where
                 .await
                 .into_diagnostic()?;
 
-            let recipe_yaml = serde_yaml::to_string(&generated_recipe.recipe).into_diagnostic()?;
-
-            tokio_fs::write(&package_recipe_path, &recipe_yaml)
+            tokio_fs::write(&package_recipe_path, named_source.code.as_bytes())
                 .await
                 .into_diagnostic()?;
 
@@ -463,7 +473,7 @@ where
                     .await
                     .into_diagnostic()?;
 
-                tokio_fs::write(&recipe_path, recipe_yaml)
+                tokio_fs::write(&recipe_path, named_source.code.as_bytes())
                     .await
                     .into_diagnostic()?;
 
@@ -714,11 +724,7 @@ where
         // immediately use the intermediate recipe for some of this rattler-build
         // functions.
         let recipe_path = self.source_dir.join(&self.manifest_rel_path);
-        let recipe_code: Arc<str> = Arc::from(
-            serde_yaml::to_string(&recipe.recipe)
-                .into_diagnostic()?
-                .as_str(),
-        );
+        let recipe_code: Arc<str> = Arc::from(recipe.to_recipe_yaml().into_diagnostic()?.as_str());
 
         // Parse the recipe into stage0
         // Create source for error reporting
@@ -828,9 +834,7 @@ where
             .await
             .into_diagnostic()?;
 
-        let recipe_yaml = serde_yaml::to_string(&recipe.recipe).into_diagnostic()?;
-
-        tokio_fs::write(&package_recipe_path, &recipe_yaml)
+        tokio_fs::write(&package_recipe_path, recipe_code.as_bytes())
             .await
             .into_diagnostic()?;
 
@@ -851,7 +855,7 @@ where
             .await
             .into_diagnostic()?;
 
-        tokio_fs::write(&recipe_path, recipe_yaml)
+        tokio_fs::write(&recipe_path, recipe_code.as_bytes())
             .await
             .into_diagnostic()?;
 

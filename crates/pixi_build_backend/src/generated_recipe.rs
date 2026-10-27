@@ -8,7 +8,8 @@ use miette::Diagnostic;
 use pixi_build_types::{InputGlobSet, ProjectModel};
 use rattler_build_jinja::Variable;
 use rattler_build_recipe::stage0::{
-    About, ConditionalList, Item, License, Package, SingleOutputRecipe, Value,
+    About, ConditionalList, Inherit, Item, License, MultiOutputRecipe, Output, Package,
+    PackageMetadata, PackageOutput, RecipeMetadata, SingleOutputRecipe, Value,
 };
 use rattler_build_types::NormalizedKey;
 use rattler_conda_types::{
@@ -133,6 +134,13 @@ pub trait GenerateRecipe {
     ) -> miette::Result<BTreeMap<NormalizedKey, Vec<Variable>>> {
         Ok(BTreeMap::new())
     }
+
+    /// The path, relative to the source anchor, through which outputs of this
+    /// source refer to each other as source dependencies. It has to point
+    /// at something pixi can discover the package from.
+    fn self_source_path(&self, _manifest_path: &Path) -> String {
+        ".".to_string()
+    }
 }
 
 pub trait BackendConfig: DeserializeOwned + Clone {
@@ -177,6 +185,11 @@ pub enum GenerateRecipeError<MetadataProviderError: Diagnostic + 'static> {
 #[derive(Clone)]
 pub struct GeneratedRecipe {
     pub recipe: SingleOutputRecipe,
+    /// Additional outputs built from the same source as [`Self::recipe`],
+    /// e.g. a metapackage that re-exports the main output under another
+    /// name. When non-empty the recipe is emitted as a multi-output recipe
+    /// whose first output is [`Self::recipe`].
+    pub extra_outputs: Vec<PackageOutput>,
     /// Globs whose matched files contribute to the metadata-cache fingerprint.
     /// Pixi evaluates them with gitignore "last match wins" semantics, so
     /// backends MUST emit inclusion patterns before any `!`-prefixed
@@ -332,11 +345,63 @@ impl GeneratedRecipe {
 
         Ok(GeneratedRecipe {
             recipe,
+            extra_outputs: Vec::new(),
             metadata_input_globs: Vec::new(),
             metadata_input_glob_sets: Vec::new(),
             build_input_globs: Vec::new(),
             build_input_glob_sets: Vec::new(),
         })
+    }
+
+    /// Serializes the recipe to YAML, as a multi-output recipe if
+    /// [`Self::extra_outputs`] is non-empty.
+    pub fn to_recipe_yaml(&self) -> Result<String, serde_yaml::Error> {
+        if self.extra_outputs.is_empty() {
+            return serde_yaml::to_string(&self.recipe);
+        }
+
+        let SingleOutputRecipe {
+            schema_version,
+            context,
+            package,
+            build,
+            requirements,
+            about,
+            extra,
+            source,
+            tests,
+        } = self.recipe.clone();
+        let main_output = PackageOutput {
+            package: PackageMetadata {
+                name: package.name,
+                version: Some(package.version.clone()),
+            },
+            inherit: Inherit::TopLevel,
+            source: ConditionalList::default(),
+            requirements,
+            build,
+            about: About::default(),
+            tests,
+        };
+
+        let multi = MultiOutputRecipe {
+            schema_version,
+            context,
+            recipe: RecipeMetadata {
+                name: None,
+                version: Some(package.version),
+            },
+            source,
+            build: Default::default(),
+            about,
+            extra,
+            tests: ConditionalList::default(),
+            outputs: std::iter::once(main_output)
+                .chain(self.extra_outputs.iter().cloned())
+                .map(|output| Output::Package(Box::new(output)))
+                .collect(),
+        };
+        serde_yaml::to_string(&multi)
     }
 }
 
