@@ -1,0 +1,170 @@
+---
+source: crates/pixi_build_ros/src/main.rs
+expression: generated.recipe
+---
+schema_version: 1
+recipe:
+  version: 0.37.1
+build:
+  script: {}
+  python:
+    entry_points: []
+    skip_pyc_compilation: []
+    use_python_app_entrypoint: false
+  skip: []
+  always_copy_files: []
+  always_include_files: []
+  merge_build_and_host_envs: false
+  dynamic_linking:
+    rpaths: []
+    binary_relocation: true
+    missing_dso_allowlist: []
+    rpath_allowlist: []
+  variant:
+    use_keys: []
+    ignore_keys: []
+  prefix_detection:
+    force_file_type:
+      text: []
+      binary: []
+    ignore: false
+    ignore_binary_files: false
+  post_process: []
+about:
+  summary: C++ nodes which were previously in the ros2/examples repository but are now just used for demo pu...
+  description: C++ nodes which were previously in the ros2/examples repository but are now just used for demo purposes.
+extra: {}
+outputs:
+  - package:
+      name: ros2-demo-nodes-cpp
+    inherit: ~
+    requirements:
+      build:
+        - ros2-ament-cmake
+        - ros2-example-interfaces
+        - ros2-rcl
+        - ros2-rclcpp
+        - ros2-rclcpp-components
+        - ros2-rcl-interfaces
+        - ros2-rcpputils
+        - ros2-rcutils
+        - ros2-rmw
+        - ros2-std-msgs
+        - ros2-ament-cmake-pytest
+        - ros2-ament-lint-auto
+        - ros2-ament-lint-common
+        - ros2-launch
+        - ros2-launch-testing
+        - ros2-launch-testing-ament-cmake
+        - ros2-launch-testing-ros
+        - ros2-ros-workspace
+        - ninja
+        - python
+        - setuptools
+        - git
+        - git-lfs
+        - cmake
+        - cpython
+        - patch
+        - make
+        - coreutils
+        - "${{ compiler('c') }}"
+        - "${{ compiler('cxx') }}"
+      host:
+        - ros2-ament-cmake
+        - ros2-example-interfaces
+        - ros2-rcl
+        - ros2-rclcpp
+        - ros2-rclcpp-components
+        - ros2-rcl-interfaces
+        - ros2-rcpputils
+        - ros2-rcutils
+        - ros2-rmw
+        - ros2-std-msgs
+        - ros2-ament-cmake-pytest
+        - ros2-ament-lint-auto
+        - ros2-ament-lint-common
+        - ros2-launch
+        - ros2-launch-testing
+        - ros2-launch-testing-ament-cmake
+        - ros2-launch-testing-ros
+        - ros2-ros-workspace
+        - python
+        - numpy
+        - pip
+        - pkg-config
+        - setuptools
+        - ros2-distro-mutex
+      run:
+        - ros2-example-interfaces
+        - ros2-launch-ros
+        - ros2-launch-xml
+        - ros2-rcl
+        - ros2-rclcpp
+        - ros2-rclcpp-components
+        - ros2-rcl-interfaces
+        - ros2-rcpputils
+        - ros2-rcutils
+        - ros2-rmw
+        - ros2-std-msgs
+        - ros2-distro-mutex
+    build:
+      script: "[script]"
+      python:
+        entry_points: []
+        skip_pyc_compilation: []
+        use_python_app_entrypoint: false
+      skip: []
+      always_copy_files: []
+      always_include_files: []
+      merge_build_and_host_envs: false
+      dynamic_linking:
+        rpaths: []
+        binary_relocation: true
+        missing_dso_allowlist: []
+        rpath_allowlist: []
+      variant:
+        use_keys: []
+        ignore_keys: []
+      prefix_detection:
+        force_file_type:
+          text: []
+          binary: []
+        ignore: false
+        ignore_binary_files: false
+      post_process: []
+    about: {}
+  - package:
+      name: ros-jazzy-demo-nodes-cpp
+    inherit: ~
+    requirements:
+      run:
+        - "${{ pin_subpackage(\"ros2-demo-nodes-cpp\", exact=True) }}"
+        - ros2-distro-mutex
+    build:
+      script:
+        content: []
+      python:
+        entry_points: []
+        skip_pyc_compilation: []
+        use_python_app_entrypoint: false
+      skip: []
+      always_copy_files: []
+      always_include_files: []
+      merge_build_and_host_envs: false
+      dynamic_linking:
+        rpaths: []
+        binary_relocation: true
+        missing_dso_allowlist: []
+        rpath_allowlist: []
+      variant:
+        use_keys: []
+        ignore_keys: []
+      prefix_detection:
+        force_file_type:
+          text: []
+          binary: []
+        ignore: false
+        ignore_binary_files: false
+      post_process: []
+    about: {}
