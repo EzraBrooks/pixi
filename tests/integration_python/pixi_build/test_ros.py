@@ -14,11 +14,34 @@ ROS_WORKSPACE_NAME = "ros-workspace"
 ROS_PACKAGE_DIRS = ["navigator", "navigator_py", "distro_less_package"]
 ROS_IMPLICIT_PACKAGE_DIR = "navigator_implicit"
 ROS_PACKAGE_OUTPUT_NAMES = {
-    "navigator": "ros-humble-navigator",
-    "navigator_py": "ros-humble-navigator-py",
+    "navigator": "ros2-navigator",
+    "navigator_py": "ros2-navigator-py",
     # The `humble` distro is automatically selected from the channels in the pixi.toml
-    "distro_less_package": "ros-humble-distro-less-package",
+    "distro_less_package": "ros2-distro-less-package",
 }
+
+
+def _artifact_name(artifact: Path) -> str:
+    """The package name of a `<name>-<version>-<build>.conda` artifact."""
+    return artifact.name.removesuffix(".conda").rsplit("-", 2)[0]
+
+
+def _artifact(output_dir: Path, package_name: str) -> Path:
+    """The single artifact of `package_name` in `output_dir`."""
+    artifacts = [
+        artifact
+        for artifact in output_dir.glob("*.conda")
+        if _artifact_name(artifact) == package_name
+    ]
+    assert len(artifacts) == 1, f"expected a single {package_name} artifact, got {artifacts}"
+    return artifacts[0]
+
+
+def _assert_built_with_wrapper(output_dir: Path, package_name: str) -> None:
+    """Each ROS 2 package comes with its `ros-<distro>-<name>` wrapper."""
+    built_names = {_artifact_name(artifact) for artifact in output_dir.glob("*.conda")}
+    wrapper_name = package_name.replace("ros2-", "ros-humble-", 1)
+    assert built_names == {package_name, wrapper_name}
 
 
 def _prepare_ros_workspace(build_data: Path, tmp_pixi_workspace: Path) -> Path:
@@ -27,15 +50,13 @@ def _prepare_ros_workspace(build_data: Path, tmp_pixi_workspace: Path) -> Path:
     return tmp_pixi_workspace
 
 
-def _publish(pixi: Path, manifest_path: Path, output_dir: Path) -> Path:
-    """Publish the package and return its single artifact."""
+def _publish(pixi: Path, manifest_path: Path, output_dir: Path, package_name: str) -> Path:
+    """Publish the package and return the artifact of `package_name`."""
     output_dir.mkdir(parents=True, exist_ok=True)
     verify_cli_command(
         [pixi, "publish", "--target-dir", str(output_dir), "--path", manifest_path],
     )
-    built_packages = list(output_dir.glob("*.conda"))
-    assert len(built_packages) == 1, f"expected a single artifact, got {built_packages}"
-    return built_packages[0]
+    return _artifact(output_dir, package_name)
 
 
 @pytest.mark.slow
@@ -54,10 +75,7 @@ def test_ros_packages_build(
         [pixi, "publish", "--target-dir", str(output_dir), "--path", manifest_path],
     )
 
-    expected_name = ROS_PACKAGE_OUTPUT_NAMES[package_dir]
-    built_packages = list(output_dir.glob("*.conda"))
-    assert built_packages, f"no package artifacts produced for {expected_name}"
-    assert any(expected_name in artifact.name for artifact in built_packages)
+    _assert_built_with_wrapper(output_dir, ROS_PACKAGE_OUTPUT_NAMES[package_dir])
 
 
 @pytest.mark.slow
@@ -76,10 +94,7 @@ def test_ros_packages_build_point_to_package_xml(
         [pixi, "publish", "--target-dir", str(output_dir), "--path", manifest_path],
     )
 
-    expected_name = ROS_PACKAGE_OUTPUT_NAMES[package_dir]
-    built_packages = list(output_dir.glob("*.conda"))
-    assert built_packages, f"no package artifacts produced for {expected_name}"
-    assert any(expected_name in artifact.name for artifact in built_packages)
+    _assert_built_with_wrapper(output_dir, ROS_PACKAGE_OUTPUT_NAMES[package_dir])
 
 
 @pytest.mark.slow
@@ -142,7 +157,8 @@ def test_ros_cmake_rebuild_omits_removed_file(
             "install(FILES stale.txt DESTINATION share/${PROJECT_NAME})\n\nament_package()",
         )
     )
-    first_package = _publish(pixi, manifest_path, workspace.joinpath("dist-first"))
+    package_name = ROS_PACKAGE_OUTPUT_NAMES["navigator"]
+    first_package = _publish(pixi, manifest_path, workspace.joinpath("dist-first"), package_name)
     # Windows installs into `%LIBRARY_PREFIX%`, so only the tail of the path is shared.
     assert any(path.endswith(stale_path) for path in package_files(first_package)), (
         "the file to remove was never packaged"
@@ -152,7 +168,7 @@ def test_ros_cmake_rebuild_omits_removed_file(
     # package should only contain what this build installed.
     cmakelists.write_text(original_cmakelists)
     package_dir.joinpath("stale.txt").unlink()
-    second_package = _publish(pixi, manifest_path, workspace.joinpath("dist-second"))
+    second_package = _publish(pixi, manifest_path, workspace.joinpath("dist-second"), package_name)
     assert not [path for path in package_files(second_package) if "stale" in path]
 
 
@@ -167,7 +183,8 @@ def test_ros_python_rebuild_omits_removed_module(
     stale_module = package_dir.joinpath("navigator_py", "stale.py")
 
     stale_module.write_text("STALE = True\n")
-    first_package = _publish(pixi, manifest_path, workspace.joinpath("dist-first"))
+    package_name = ROS_PACKAGE_OUTPUT_NAMES["navigator_py"]
+    first_package = _publish(pixi, manifest_path, workspace.joinpath("dist-first"), package_name)
     assert any(path.endswith("navigator_py/stale.py") for path in package_files(first_package)), (
         "the module to remove was never packaged"
     )
@@ -175,7 +192,7 @@ def test_ros_python_rebuild_omits_removed_module(
     # `setup.py install` leaves the module behind in the reused prefix, so the second
     # package should only contain what this build installed.
     stale_module.unlink()
-    second_package = _publish(pixi, manifest_path, workspace.joinpath("dist-second"))
+    second_package = _publish(pixi, manifest_path, workspace.joinpath("dist-second"), package_name)
     assert not [path for path in package_files(second_package) if "stale" in path]
 
 
@@ -203,7 +220,7 @@ def test_ros_python_package_cross_compiles(
         ],
     )
 
-    [package] = output_dir.glob("*.conda")
+    package = _artifact(output_dir, ROS_PACKAGE_OUTPUT_NAMES["navigator_py"])
     with tempfile.TemporaryDirectory() as temp_dir:
         extract(package, Path(temp_dir))
         index = json.loads(Path(temp_dir, "info", "index.json").read_text())

@@ -8,6 +8,10 @@ exclude-newer = "7d"
 platforms = ["osx-arm64", "linux-64", "win-64", "linux-aarch64"]
 preview = ["pixi-build"]
 
+# RoboStack's `ros2-*` packages require macOS 14.
+[system-requirements]
+macos = "14.0"
+
 # libc++ 23 dropped `std::wstring_convert`, which robostack-humble's
 # `rosidl_runtime_cpp` header still uses. Drop this once it is fixed upstream.
 [workspace.target.osx.build-variants]

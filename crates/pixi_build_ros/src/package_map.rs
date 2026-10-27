@@ -181,9 +181,8 @@ fn resolve_rosdep_to_conda_package_spec(
     // Not in package map -> assume it's a ROS package
     let Some(entry) = package_map_data.get(&dep.name) else {
         let ros_name = format!(
-            "ros-{}-{}{}",
-            distro.name,
-            dep.name.replace('_', "-"),
+            "{}{}",
+            distro.package_name(&dep.name),
             spec_str.as_deref().unwrap_or("")
         );
         return Ok(vec![ros_name]);
@@ -196,9 +195,8 @@ fn resolve_rosdep_to_conda_package_spec(
             .iter()
             .map(|name| {
                 format!(
-                    "ros-{}-{}{}",
-                    distro.name,
-                    name.replace('_', "-"),
+                    "{}{}",
+                    distro.package_name(name),
                     spec_str.as_deref().unwrap_or("")
                 )
             })
@@ -756,7 +754,7 @@ mod tests {
 
         let result =
             rosdep_to_conda_package_spec(&dep, &distro, Subdir::Linux64, &HashMap::new()).unwrap();
-        assert_eq!(result, vec!["ros-jazzy-ament-cmake==1.2.3"]);
+        assert_eq!(result, vec!["ros2-ament-cmake==1.2.3"]);
     }
 
     #[test]
@@ -771,7 +769,7 @@ mod tests {
 
         let result =
             rosdep_to_conda_package_spec(&dep, &distro, Subdir::Linux64, &HashMap::new()).unwrap();
-        assert_eq!(result, vec!["ros-jazzy-rclcpp >=18.0.0,<20.0.0"]);
+        assert_eq!(result, vec!["ros2-rclcpp >=18.0.0,<20.0.0"]);
     }
 
     #[test]
@@ -792,7 +790,7 @@ mod tests {
 
         let result =
             rosdep_to_conda_package_spec(&dep, &distro, Subdir::Linux64, &package_map).unwrap();
-        assert_eq!(result, vec!["ros-jazzy-foo-util >=3.1"]);
+        assert_eq!(result, vec!["ros2-foo-util >=3.1"]);
     }
 
     #[test]
@@ -1028,7 +1026,7 @@ mod tests {
 
         let result =
             rosdep_to_conda_package_spec(&dep, &distro, Subdir::Linux64, &HashMap::new()).unwrap();
-        assert_eq!(result, vec!["ros-jazzy-customlib >1.0.0"]);
+        assert_eq!(result, vec!["ros2-customlib >1.0.0"]);
     }
 
     #[test]
