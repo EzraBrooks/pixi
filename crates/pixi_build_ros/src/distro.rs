@@ -78,6 +78,26 @@ impl Distro {
         let version = RosVersion::for_distro(&name);
         Self { name, version }
     }
+
+    /// The conda package name RoboStack publishes a ROS package under:
+    /// `ros2-<name>` for ROS 2 and `ros-<distro>-<name>` for ROS 1.
+    pub fn package_name(&self, ros_name: &str) -> String {
+        match self.version {
+            RosVersion::Ros1 => self.distro_prefixed_name(ros_name),
+            RosVersion::Ros2 => format!("ros2-{}", ros_name.replace('_', "-")),
+        }
+    }
+
+    /// The distro-prefixed `ros-<distro>-<name>` metapackage RoboStack
+    /// publishes alongside each ROS 2 package. ROS 1 packages already carry
+    /// that name, so they have no wrapper.
+    pub fn wrapper_package_name(&self, ros_name: &str) -> Option<String> {
+        (self.version == RosVersion::Ros2).then(|| self.distro_prefixed_name(ros_name))
+    }
+
+    fn distro_prefixed_name(&self, ros_name: &str) -> String {
+        format!("ros-{}-{}", self.name, ros_name.replace('_', "-"))
+    }
 }
 
 #[cfg(test)]
@@ -131,6 +151,20 @@ mod tests {
     fn test_mutex_package_name() {
         assert_eq!(RosVersion::Ros1.mutex_package_name(), "ros-distro-mutex");
         assert_eq!(RosVersion::Ros2.mutex_package_name(), "ros2-distro-mutex");
+    }
+
+    #[test]
+    fn test_package_names() {
+        let jazzy = Distro::new("jazzy");
+        assert_eq!(jazzy.package_name("my_pkg"), "ros2-my-pkg");
+        assert_eq!(
+            jazzy.wrapper_package_name("my_pkg").as_deref(),
+            Some("ros-jazzy-my-pkg")
+        );
+
+        let noetic = Distro::new("noetic");
+        assert_eq!(noetic.package_name("my_pkg"), "ros-noetic-my-pkg");
+        assert_eq!(noetic.wrapper_package_name("my_pkg"), None);
     }
 
     #[test]

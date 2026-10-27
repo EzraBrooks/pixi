@@ -18,7 +18,10 @@ use pixi_build_backend::generated_recipe::{GenerateRecipe, GeneratedRecipe, Pyth
 use pixi_build_backend::intermediate_backend::IntermediateBackendInstantiator;
 use pixi_build_backend::tools::BackendIdentifier;
 use rattler_build_jinja::{JinjaTemplate, Variable};
-use rattler_build_recipe::stage0::{Item, Script, SerializableMatchSpec, Value};
+use rattler_build_recipe::stage0::{
+    Build, BuildPlan, ConditionalList, Inherit, Item, Package, PackageMetadata, PackageOutput,
+    Requirements, Script, SerializableMatchSpec, Value,
+};
 use rattler_build_types::NormalizedKey;
 use rattler_conda_types::{ChannelUrl, Subdir};
 
@@ -121,7 +124,7 @@ impl GenerateRecipe for RosGenerator {
 
         let mut generated_recipe = parse_and_render(
             package_xml.clone(),
-            &distro.name,
+            &distro,
             model.clone(),
             extra_input_globs.clone(),
             package_mapping_files,
@@ -183,7 +186,7 @@ impl GenerateRecipe for RosGenerator {
                 &discovery.packages,
                 &package_xml.name,
                 &manifest_root,
-                &distro.name,
+                &distro,
             );
 
             // Apply per-class: a manual entry in the model for the same conda
@@ -324,6 +327,15 @@ impl GenerateRecipe for RosGenerator {
                 .with_env(script_env)
                 .with_secrets(model.secrets.iter().cloned().collect());
 
+        let package = &generated_recipe.recipe.package;
+        if let Some(wrapper_name) = distro.wrapper_package_name(&package_xml.name)
+            && let Some(main_name) = package.name.as_concrete()
+            && main_name.as_str() != wrapper_name
+        {
+            let wrapper = wrapper_output(main_name.as_str(), package, &wrapper_name, mutex_name);
+            generated_recipe.extra_outputs.push(wrapper);
+        }
+
         Ok(generated_recipe)
     }
 
@@ -371,6 +383,70 @@ impl GenerateRecipe for RosGenerator {
         host_platform: Subdir,
     ) -> miette::Result<BTreeMap<NormalizedKey, Vec<Variable>>> {
         Ok(default_compiler_variants(host_platform))
+    }
+
+    /// A bare ROS package can only be discovered through its package.xml,
+    /// see [`workspace_discovery::sibling_source_spec`].
+    fn self_source_path(&self, manifest_path: &Path) -> String {
+        let manifest_root = if manifest_path.is_file() {
+            manifest_path.parent().unwrap_or(manifest_path)
+        } else {
+            manifest_path
+        };
+        if pixi_build_discovery::is_pixi_package_directory(manifest_root) {
+            ".".to_string()
+        } else {
+            "package.xml".to_string()
+        }
+    }
+}
+
+/// The `ros-<distro>-<name>` metapackage RoboStack publishes next to every
+/// ROS 2 package, pinning the distro-agnostic output exactly.
+fn wrapper_output(
+    main_name: &str,
+    package: &Package,
+    wrapper_name: &str,
+    mutex_name: &str,
+) -> PackageOutput {
+    let pin = JinjaTemplate::new(format!(
+        "${{{{ pin_subpackage('{main_name}', exact=true) }}}}"
+    ))
+    .expect("valid jinja template");
+    let run = ConditionalList::new(vec![
+        Item::Value(Value::new_template(pin, None)),
+        Item::Value(Value::new_concrete(
+            SerializableMatchSpec::from(mutex_name),
+            None,
+        )),
+    ]);
+
+    PackageOutput {
+        package: PackageMetadata {
+            name: Value::new_concrete(
+                rattler_conda_types::PackageName::new_unchecked(wrapper_name).into(),
+                None,
+            ),
+            version: Some(package.version.clone()),
+        },
+        inherit: Inherit::TopLevel,
+        source: ConditionalList::default(),
+        requirements: Requirements {
+            run,
+            ..Requirements::default()
+        },
+        build: Build {
+            // An explicitly empty script; the default one would run any
+            // `build.sh` / `build.bat` found next to the package.xml.
+            plan: BuildPlan::Script(Box::new(Script {
+                content: Some(ConditionalList::default()),
+                content_explicit: true,
+                ..Script::default()
+            })),
+            ..Build::default()
+        },
+        about: Default::default(),
+        tests: ConditionalList::default(),
     }
 }
 
@@ -440,37 +516,37 @@ mod tests {
                 .unwrap();
 
         insta::assert_yaml_snapshot!(requirements.build, @r###"
-        - ros-jazzy-ament-cmake
-        - ros-jazzy-example-interfaces
-        - ros-jazzy-rcl
-        - ros-jazzy-rclcpp
-        - ros-jazzy-rclcpp-components
-        - ros-jazzy-rcl-interfaces
-        - ros-jazzy-rcpputils
-        - ros-jazzy-rcutils
-        - ros-jazzy-rmw
-        - ros-jazzy-std-msgs
-        - ros-jazzy-ament-cmake-pytest
-        - ros-jazzy-ament-lint-auto
-        - ros-jazzy-ament-lint-common
-        - ros-jazzy-launch
-        - ros-jazzy-launch-testing
-        - ros-jazzy-launch-testing-ament-cmake
-        - ros-jazzy-launch-testing-ros
-        - ros-jazzy-ros-workspace
+        - ros2-ament-cmake
+        - ros2-example-interfaces
+        - ros2-rcl
+        - ros2-rclcpp
+        - ros2-rclcpp-components
+        - ros2-rcl-interfaces
+        - ros2-rcpputils
+        - ros2-rcutils
+        - ros2-rmw
+        - ros2-std-msgs
+        - ros2-ament-cmake-pytest
+        - ros2-ament-lint-auto
+        - ros2-ament-lint-common
+        - ros2-launch
+        - ros2-launch-testing
+        - ros2-launch-testing-ament-cmake
+        - ros2-launch-testing-ros
+        - ros2-ros-workspace
         "###);
         insta::assert_yaml_snapshot!(requirements.run, @r###"
-        - ros-jazzy-example-interfaces
-        - ros-jazzy-launch-ros
-        - ros-jazzy-launch-xml
-        - ros-jazzy-rcl
-        - ros-jazzy-rclcpp
-        - ros-jazzy-rclcpp-components
-        - ros-jazzy-rcl-interfaces
-        - ros-jazzy-rcpputils
-        - ros-jazzy-rcutils
-        - ros-jazzy-rmw
-        - ros-jazzy-std-msgs
+        - ros2-example-interfaces
+        - ros2-launch-ros
+        - ros2-launch-xml
+        - ros2-rcl
+        - ros2-rclcpp
+        - ros2-rclcpp-components
+        - ros2-rcl-interfaces
+        - ros2-rcpputils
+        - ros2-rcutils
+        - ros2-rmw
+        - ros2-std-msgs
         "###);
     }
 
@@ -493,11 +569,11 @@ mod tests {
                 .unwrap();
 
         insta::assert_yaml_snapshot!(requirements.build, @r###"
-        - ros-jazzy-ament-cmake
-        - ros-jazzy-rosidl-default-generators
-        - ros-jazzy-ament-lint-auto
-        - ros-jazzy-ament-lint-common
-        - ros-jazzy-ros-workspace
+        - ros2-ament-cmake
+        - ros2-rosidl-default-generators
+        - ros2-ament-lint-auto
+        - ros2-ament-lint-common
+        - ros2-ros-workspace
         "###);
     }
 
@@ -546,7 +622,7 @@ mod tests {
                 .as_concrete()
                 .unwrap()
                 .to_string(),
-            "ros-jazzy-demo-nodes-cpp"
+            "ros2-demo-nodes-cpp"
         );
         assert_eq!(
             generated_recipe
@@ -561,24 +637,24 @@ mod tests {
 
         insta::assert_yaml_snapshot!(generated_recipe.recipe.requirements, @r###"
         build:
-          - ros-jazzy-ament-cmake
-          - ros-jazzy-example-interfaces
-          - ros-jazzy-rcl
-          - ros-jazzy-rclcpp
-          - ros-jazzy-rclcpp-components
-          - ros-jazzy-rcl-interfaces
-          - ros-jazzy-rcpputils
-          - ros-jazzy-rcutils
-          - ros-jazzy-rmw
-          - ros-jazzy-std-msgs
-          - ros-jazzy-ament-cmake-pytest
-          - ros-jazzy-ament-lint-auto
-          - ros-jazzy-ament-lint-common
-          - ros-jazzy-launch
-          - ros-jazzy-launch-testing
-          - ros-jazzy-launch-testing-ament-cmake
-          - ros-jazzy-launch-testing-ros
-          - ros-jazzy-ros-workspace
+          - ros2-ament-cmake
+          - ros2-example-interfaces
+          - ros2-rcl
+          - ros2-rclcpp
+          - ros2-rclcpp-components
+          - ros2-rcl-interfaces
+          - ros2-rcpputils
+          - ros2-rcutils
+          - ros2-rmw
+          - ros2-std-msgs
+          - ros2-ament-cmake-pytest
+          - ros2-ament-lint-auto
+          - ros2-ament-lint-common
+          - ros2-launch
+          - ros2-launch-testing
+          - ros2-launch-testing-ament-cmake
+          - ros2-launch-testing-ros
+          - ros2-ros-workspace
           - ninja
           - python
           - setuptools
@@ -592,24 +668,24 @@ mod tests {
           - "${{ compiler('c') }}"
           - "${{ compiler('cxx') }}"
         host:
-          - ros-jazzy-ament-cmake
-          - ros-jazzy-example-interfaces
-          - ros-jazzy-rcl
-          - ros-jazzy-rclcpp
-          - ros-jazzy-rclcpp-components
-          - ros-jazzy-rcl-interfaces
-          - ros-jazzy-rcpputils
-          - ros-jazzy-rcutils
-          - ros-jazzy-rmw
-          - ros-jazzy-std-msgs
-          - ros-jazzy-ament-cmake-pytest
-          - ros-jazzy-ament-lint-auto
-          - ros-jazzy-ament-lint-common
-          - ros-jazzy-launch
-          - ros-jazzy-launch-testing
-          - ros-jazzy-launch-testing-ament-cmake
-          - ros-jazzy-launch-testing-ros
-          - ros-jazzy-ros-workspace
+          - ros2-ament-cmake
+          - ros2-example-interfaces
+          - ros2-rcl
+          - ros2-rclcpp
+          - ros2-rclcpp-components
+          - ros2-rcl-interfaces
+          - ros2-rcpputils
+          - ros2-rcutils
+          - ros2-rmw
+          - ros2-std-msgs
+          - ros2-ament-cmake-pytest
+          - ros2-ament-lint-auto
+          - ros2-ament-lint-common
+          - ros2-launch
+          - ros2-launch-testing
+          - ros2-launch-testing-ament-cmake
+          - ros2-launch-testing-ros
+          - ros2-ros-workspace
           - python
           - numpy
           - pip
@@ -617,17 +693,17 @@ mod tests {
           - setuptools
           - ros2-distro-mutex
         run:
-          - ros-jazzy-example-interfaces
-          - ros-jazzy-launch-ros
-          - ros-jazzy-launch-xml
-          - ros-jazzy-rcl
-          - ros-jazzy-rclcpp
-          - ros-jazzy-rclcpp-components
-          - ros-jazzy-rcl-interfaces
-          - ros-jazzy-rcpputils
-          - ros-jazzy-rcutils
-          - ros-jazzy-rmw
-          - ros-jazzy-std-msgs
+          - ros2-example-interfaces
+          - ros2-launch-ros
+          - ros2-launch-xml
+          - ros2-rcl
+          - ros2-rclcpp
+          - ros2-rclcpp-components
+          - ros2-rcl-interfaces
+          - ros2-rcpputils
+          - ros2-rcutils
+          - ros2-rmw
+          - ros2-std-msgs
           - ros2-distro-mutex
         "###);
     }
@@ -701,6 +777,63 @@ mod tests {
         });
     }
 
+    #[tokio::test]
+    async fn test_ros2_package_has_distro_wrapper_output() {
+        let model = project_fixture!({});
+        let generated =
+            generate_recipe_for_fixture("demo_nodes_cpp.xml", "jazzy", &model, vec![]).await;
+
+        assert_eq!(
+            wrapper_name(&generated).as_deref(),
+            Some("ros-jazzy-demo-nodes-cpp")
+        );
+        let wrapper = &generated.extra_outputs[0];
+        let run: Vec<String> = wrapper
+            .requirements
+            .run
+            .iter()
+            .map(|item| match item {
+                Item::Value(value) => value.to_string(),
+                other => panic!("unexpected item {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            run,
+            vec![
+                "${{ pin_subpackage('ros2-demo-nodes-cpp', exact=true) }}".to_string(),
+                "ros2-distro-mutex".to_string(),
+            ]
+        );
+
+        let yaml = generated.to_recipe_yaml().unwrap();
+        let source = rattler_build_recipe::source_code::Source::from_string(
+            "recipe".to_string(),
+            yaml.clone(),
+        );
+        let parsed = rattler_build_recipe::parse_recipe_with_config(&source, Default::default())
+            .unwrap_or_else(|e| panic!("{e:?}\n{yaml}"));
+        let rattler_build_recipe::stage0::Recipe::MultiOutput(multi) = parsed else {
+            panic!("expected a multi-output recipe:\n{yaml}");
+        };
+        assert_eq!(multi.outputs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_ros1_package_has_no_wrapper_output() {
+        let model = project_fixture!({});
+        let generated =
+            generate_recipe_for_fixture("custom_ros.xml", "noetic", &model, vec![]).await;
+        assert!(generated.extra_outputs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_no_wrapper_output_when_named_like_the_wrapper() {
+        let model = project_fixture!({ "name": "ros-jazzy-demo-nodes-cpp" });
+        let generated =
+            generate_recipe_for_fixture("demo_nodes_cpp.xml", "jazzy", &model, vec![]).await;
+        assert!(generated.extra_outputs.is_empty());
+    }
+
     async fn generate_conditional_recipe(
         distro_name: &str,
         override_env: Option<indexmap::IndexMap<String, String>>,
@@ -764,8 +897,9 @@ mod tests {
     /// Extract only the declared conditional deps (ament_cmake, catkin, rclcpp, roscpp)
     /// to make the snapshot focused.
     fn filter_conditional_deps(generated: &GeneratedRecipe, distro: &str) -> serde_json::Value {
-        let declared = ["ament-cmake", "catkin", "rclcpp", "roscpp"];
-        let prefix = format!("ros-{distro}-");
+        let distro = Distro::new(distro);
+        let declared =
+            ["ament-cmake", "catkin", "rclcpp", "roscpp"].map(|d| distro.package_name(d));
 
         let filter = |list: &rattler_build_recipe::stage0::ConditionalList<
             SerializableMatchSpec,
@@ -777,12 +911,7 @@ mod tests {
                     Item::Value(v) => v.as_concrete().map(|s| s.to_string()),
                     _ => None,
                 })
-                .filter(|dep| {
-                    dep.starts_with(&prefix)
-                        && declared
-                            .iter()
-                            .any(|d| dep.strip_prefix(&prefix) == Some(*d))
-                })
+                .filter(|dep| declared.contains(dep))
                 .collect();
             names.sort();
             names
@@ -799,10 +928,10 @@ mod tests {
         let generated = generate_conditional_recipe("jazzy", None).await;
         insta::assert_yaml_snapshot!(filter_conditional_deps(&generated, "jazzy"), @r###"
         build:
-          - ros-jazzy-ament-cmake
-          - ros-jazzy-rclcpp
+          - ros2-ament-cmake
+          - ros2-rclcpp
         run:
-          - ros-jazzy-rclcpp
+          - ros2-rclcpp
         "###);
     }
 
@@ -827,10 +956,10 @@ mod tests {
         let generated = generate_conditional_recipe("jazzy", Some(env)).await;
         insta::assert_yaml_snapshot!(filter_conditional_deps(&generated, "jazzy"), @r###"
         build:
-          - ros-jazzy-catkin
-          - ros-jazzy-roscpp
+          - ros2-catkin
+          - ros2-roscpp
         run:
-          - ros-jazzy-roscpp
+          - ros2-roscpp
         "###);
     }
 
@@ -1028,7 +1157,11 @@ mod tests {
                 .as_concrete()
                 .unwrap()
                 .to_string(),
-            "ros-jazzy-demo-nodes-cpp"
+            "ros2-demo-nodes-cpp"
+        );
+        assert_eq!(
+            wrapper_name(&generated),
+            Some("ros-jazzy-demo-nodes-cpp".to_string())
         );
     }
 
@@ -1076,7 +1209,11 @@ mod tests {
                 .as_concrete()
                 .unwrap()
                 .to_string(),
-            "ros-humble-demo-nodes-cpp"
+            "ros2-demo-nodes-cpp"
+        );
+        assert_eq!(
+            wrapper_name(&generated),
+            Some("ros-humble-demo-nodes-cpp".to_string())
         );
     }
 
@@ -1289,6 +1426,13 @@ mod tests {
         fs::write(dir.join("package.xml"), xml).unwrap();
     }
 
+    fn wrapper_name(generated: &GeneratedRecipe) -> Option<String> {
+        let [wrapper] = generated.extra_outputs.as_slice() else {
+            return None;
+        };
+        Some(wrapper.package.name.as_concrete()?.to_string())
+    }
+
     /// Returns the first concrete item whose package name equals `conda_name`.
     fn find_concrete<'a>(
         list: &'a rattler_build_recipe::stage0::ConditionalList<SerializableMatchSpec>,
@@ -1342,19 +1486,18 @@ mod tests {
             .await
             .expect("generate_recipe should succeed");
 
-        let sibling_in_build =
-            find_concrete(&generated.recipe.requirements.build, "ros-jazzy-pkg-b")
-                .expect("sibling should appear in build requirements");
+        let sibling_in_build = find_concrete(&generated.recipe.requirements.build, "ros2-pkg-b")
+            .expect("sibling should appear in build requirements");
         assert!(
             sibling_in_build.0.url.is_some(),
-            "expected ros-jazzy-pkg-b to be a source dep, got: {sibling_in_build}"
+            "expected ros2-pkg-b to be a source dep, got: {sibling_in_build}"
         );
 
-        let sibling_in_run = find_concrete(&generated.recipe.requirements.run, "ros-jazzy-pkg-b")
+        let sibling_in_run = find_concrete(&generated.recipe.requirements.run, "ros2-pkg-b")
             .expect("sibling should also appear in run requirements");
         assert!(
             sibling_in_run.0.url.is_some(),
-            "expected ros-jazzy-pkg-b in run to be source, got: {sibling_in_run}"
+            "expected ros2-pkg-b in run to be source, got: {sibling_in_run}"
         );
     }
 
@@ -1389,7 +1532,7 @@ mod tests {
             .await
             .expect("generate_recipe should succeed");
 
-        let sibling = find_concrete(&generated.recipe.requirements.build, "ros-jazzy-pkg-b")
+        let sibling = find_concrete(&generated.recipe.requirements.build, "ros2-pkg-b")
             .expect("sibling should still be present as binary");
         assert!(
             sibling.0.url.is_none(),
@@ -1411,7 +1554,7 @@ mod tests {
             "targets": {
                 "defaultTarget": {
                     "runDependencies": {
-                        "ros-jazzy-pkg-b": { "binary": { "version": "==1.2.3" } }
+                        "ros2-pkg-b": { "binary": { "version": "==1.2.3" } }
                     }
                 }
             }
@@ -1438,14 +1581,14 @@ mod tests {
             .await
             .expect("generate_recipe should succeed");
 
-        let in_run = find_concrete(&generated.recipe.requirements.run, "ros-jazzy-pkg-b")
+        let in_run = find_concrete(&generated.recipe.requirements.run, "ros2-pkg-b")
             .expect("run entry should remain");
         assert!(
             in_run.0.url.is_none(),
             "manual model entry must stay binary, got source: {in_run}"
         );
 
-        let in_build = find_concrete(&generated.recipe.requirements.build, "ros-jazzy-pkg-b")
+        let in_build = find_concrete(&generated.recipe.requirements.build, "ros2-pkg-b")
             .expect("build entry should exist");
         assert!(
             in_build.0.url.is_some(),
@@ -1547,7 +1690,7 @@ mod tests {
             .await
             .expect("generate_recipe should succeed");
 
-        let sibling = find_concrete(&generated.recipe.requirements.build, "ros-jazzy-pkg-b")
+        let sibling = find_concrete(&generated.recipe.requirements.build, "ros2-pkg-b")
             .expect("ignored sibling should still appear via RoboStack fallback");
         assert!(
             sibling.0.url.is_none(),
@@ -1584,7 +1727,7 @@ mod tests {
             .await
             .expect("generate_recipe should succeed");
 
-        let self_in_build = find_concrete(&generated.recipe.requirements.build, "ros-jazzy-pkg-a");
+        let self_in_build = find_concrete(&generated.recipe.requirements.build, "ros2-pkg-a");
         assert!(
             self_in_build.is_none(),
             "current package must not list itself as a source dep: {self_in_build:?}"
